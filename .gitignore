@@ -59,8 +59,12 @@ dist-scripts
 *.db-journal
 *.sqlite
 *.sqlite-journal
+/data/codex-wrong-book/
 
 # Logs & Output
 *.log
 test_output*.txt
 upload_test_output*.txt
+
+调用踩坑.md
+概括.md
