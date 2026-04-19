@@ -2,6 +2,7 @@
  * Shared AI prompt templates
  * This module provides centralized prompt management
  */
+import { jsonrepair } from "jsonrepair";
 
 /**
  * Options for customizing prompts
@@ -43,6 +44,18 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 判断这道题是否需要依赖图片才能正确解答。如果题目包含几何图形、函数图像、实验装置图、电路图等必须看图才能理解的内容，填写 true；如果只需要文字描述即可理解（如英语题、纯文字数学题），填写 false。
 </requires_image>
 
+<wrong_answer_text>
+如果图片中包含学生已经写出的错误解答、错误步骤、草稿或错误答案，请尽量按原样摘录；如果没有看到学生错误解答，请留空。
+</wrong_answer_text>
+
+<mistake_status>
+填写以下值之一：wrong_attempt（图片中有错误解答或错误步骤）、not_attempted（没有错误解答，像是完全不会做或未作答）、unknown（无法判断）。
+</mistake_status>
+
+<mistake_analysis>
+如果图片中包含错误解答，请分析错误可能发生在哪一步、为什么错、导致了什么后果，以及背后的能力/习惯原因；如果没有错误解答，请留空。
+</mistake_analysis>
+
 <question_text>
 在此处填写题目的完整文本。使用 Markdown 格式。所有数学公式使用 LaTeX 符号（行内 $...$，块级 $$...$$）。
 </question_text>
@@ -65,7 +78,7 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 - 每题最多 5 个标签。
 
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 6 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
+1. **格式严格**：必须严格包含上述 9 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
 2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
 3. **内容完整**：如果包含子问题，请在 question_text 中完整列出。
 4. **禁止图片**：严禁包含任何图片链接或 markdown 图片语法。
@@ -376,4 +389,210 @@ export function generateReanswerPrompt(
     subject_hint: subjectHint,
     provider_hints: options?.providerHints || ''
   }).trim();
+}
+
+export const DEFAULT_ABILITY_ANALYSIS_TEMPLATE = `【角色与核心任务】
+你是一位严谨的学习诊断老师。请把这批“用户主动选中”的错题当成一个整体样本进行诊断：先通盘观察所有题目，再结合年级阶段、知识点特征、题目考点、错题分布、作答状态、错误解答、错因分析，以及题目之间反复出现的共通模式，归纳学生真正的抽象能力薄弱点。
+
+请注意：能力薄弱点不是每道题孤立得出的结论，而是从一组错题中观察到的稳定倾向。你需要先总结本组错题的共同问题，再把这些薄弱点反向关联到具体错题。
+
+【整体统计摘要】
+{{overall_summary}}
+
+【库内抽象能力标签】
+{{ability_tags}}
+
+【错题列表】
+{{items}}
+
+【输出要求】
+只输出一个 <ability_results> 标签，标签内容必须是 JSON 对象，不要使用 Markdown 代码块。格式如下：
+<ability_results>
+{
+  "batch_summary": "本组选中错题的整体薄弱点总结",
+  "common_patterns": [
+    "多道题都体现出审题条件提取不足",
+    "函数与几何题中存在图文转换困难"
+  ],
+  "items": [
+    {
+      "id": "错题ID",
+      "generated_tags": ["条件转化不稳定", "跨题型迁移不足"],
+      "library_tags": ["审题理解", "图文转换"],
+      "reason": "结合本组错题看，该题主要体现出条件提取和图形信息转化上的共性薄弱点。"
+    }
+  ]
+}
+</ability_results>
+
+【规则】
+- 每道题总标签数控制在 2~4 个。
+- generated_tags 必须是你根据本组选中错题的共性自主归纳出的薄弱点标签，数量 1~2 个，名称要短、稳定、可复用。
+- library_tags 必须从【库内抽象能力标签】中选择，数量 1~2 个；不能把不存在于库内的标签放入 library_tags。
+- 如果某题所在学科没有库内标签，library_tags 可以为空，但 generated_tags 仍应给出 1~2 个。
+- 不要把普通知识点当成抽象能力标签；知识点只是诊断能力薄弱点的证据。
+- 如果表面是计算错，但多题共性更像审题、条件提取、图文转换、变形、检验或建模，要优先标根因。
+- 每个返回的 id 必须来自【错题列表】，不要遗漏已发送题目。`;
+
+export interface AbilityAnalysisPromptItem {
+  id: string;
+  subject?: string | null;
+  gradeSemester?: string | null;
+  questionText?: string | null;
+  answerText?: string | null;
+  analysis?: string | null;
+  knowledgePoints?: string[];
+  wrongAnswerText?: string | null;
+  mistakeAnalysis?: string | null;
+  mistakeStatus?: string | null;
+  existingAbilityTags?: { name: string; source?: string | null }[];
+}
+
+export interface AbilityAnalysisPromptTag {
+  name: string;
+  subject: string;
+  description?: string | null;
+}
+
+export interface ParsedAbilityAnalysisResult {
+  errorItemId: string;
+  generatedTags: string[];
+  libraryTags: string[];
+  tags: string[];
+  reason?: string;
+}
+
+export interface ParsedAbilityAnalysisBatch {
+  batchSummary?: string;
+  commonPatterns: string[];
+  items: ParsedAbilityAnalysisResult[];
+}
+
+function fullTextForPrompt(text: string | null | undefined): string {
+  return (text || '').trim();
+}
+
+export function generateAbilityAnalysisPrompt(
+  items: AbilityAnalysisPromptItem[],
+  availableTags: AbilityAnalysisPromptTag[],
+  overallSummary = '暂无整体统计。',
+  options?: { customTemplate?: string }
+): string {
+  const tagsText = availableTags.length > 0
+    ? availableTags
+      .map(tag => `- [${tag.subject}] ${tag.name}${tag.description ? `：${tag.description}` : ''}`)
+      .join('\n')
+    : '（无可用能力标签）';
+
+  const itemsText = items.map((item, index) => {
+    const existingTags = (item.existingAbilityTags || [])
+      .map(tag => `${tag.name}${tag.source ? `(${tag.source})` : ''}`)
+      .join('、') || '无';
+
+    return [
+      `### ${index + 1}. ID: ${item.id}`,
+      `学科: ${item.subject || 'unknown'}`,
+      `年级/学期: ${item.gradeSemester || 'unknown'}`,
+      `知识点: ${(item.knowledgePoints || []).join('、') || '无'}`,
+      `作答状态: ${item.mistakeStatus || 'unknown'}`,
+      `已有能力标签: ${existingTags}`,
+      `题目: ${fullTextForPrompt(item.questionText) || '无'}`,
+      `参考答案: ${fullTextForPrompt(item.answerText) || '无'}`,
+      `解析: ${fullTextForPrompt(item.analysis) || '无'}`,
+      `错误解答: ${fullTextForPrompt(item.wrongAnswerText) || '无'}`,
+      `错因分析: ${fullTextForPrompt(item.mistakeAnalysis) || '无'}`,
+    ].join('\n');
+  }).join('\n\n');
+
+  const template = options?.customTemplate || DEFAULT_ABILITY_ANALYSIS_TEMPLATE;
+
+  return replaceVariables(template, {
+    overall_summary: overallSummary,
+    ability_tags: tagsText,
+    items: itemsText,
+  }).trim();
+}
+
+function stripCodeFence(text: string): string {
+  return text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+function toTagList(value: unknown, max = 2): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((tag: unknown) => String(tag || '').trim())
+    .filter(Boolean)
+    .filter((tag, index, arr) => arr.indexOf(tag) === index)
+    .slice(0, max);
+}
+
+function parseAbilityItem(rawItem: unknown): ParsedAbilityAnalysisResult | null {
+  const item = rawItem && typeof rawItem === 'object'
+    ? rawItem as Record<string, unknown>
+    : {};
+
+  const errorItemId = String(item.id || item.errorItemId || '').trim();
+  if (!errorItemId) return null;
+
+  const generatedTags = toTagList(item.generated_tags ?? item.generatedTags, 2);
+  const legacyTags = toTagList(item.tags, 4);
+  const libraryTags = toTagList(item.library_tags ?? item.libraryTags, 2);
+  const normalizedLibraryTags = libraryTags.length > 0
+    ? libraryTags
+    : legacyTags.slice(0, 2);
+
+  return {
+    errorItemId,
+    generatedTags,
+    libraryTags: normalizedLibraryTags,
+    tags: [...generatedTags, ...normalizedLibraryTags]
+      .filter((tag, index, arr) => arr.indexOf(tag) === index)
+      .slice(0, 4),
+    reason: typeof item.reason === 'string' ? item.reason : undefined,
+  };
+}
+
+export function parseAbilityAnalysisResponse(text: string): ParsedAbilityAnalysisBatch {
+  const match = text.match(/<ability_results>([\s\S]*?)<\/ability_results>/i);
+  const rawJson = stripCodeFence(match ? match[1] : text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    parsed = JSON.parse(jsonrepair(rawJson));
+  }
+  if (Array.isArray(parsed)) {
+    return {
+      commonPatterns: [],
+      items: parsed
+        .map(parseAbilityItem)
+        .filter((item): item is ParsedAbilityAnalysisResult => Boolean(item)),
+    };
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { commonPatterns: [], items: [] };
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const rawItems = Array.isArray(obj.items) ? obj.items : [];
+
+  return {
+    batchSummary: typeof obj.batch_summary === 'string'
+      ? obj.batch_summary
+      : typeof obj.batchSummary === 'string'
+        ? obj.batchSummary
+        : undefined,
+    commonPatterns: Array.isArray(obj.common_patterns)
+      ? obj.common_patterns.map(pattern => String(pattern || '').trim()).filter(Boolean)
+      : Array.isArray(obj.commonPatterns)
+        ? obj.commonPatterns.map(pattern => String(pattern || '').trim()).filter(Boolean)
+        : [],
+    items: rawItems
+      .map(parseAbilityItem)
+      .filter((item): item is ParsedAbilityAnalysisResult => Boolean(item)),
+  };
 }

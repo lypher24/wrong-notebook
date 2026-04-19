@@ -17,6 +17,10 @@ export async function GET(req: Request) {
     const mastery = searchParams.get("mastery");
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
+    const idsParam = searchParams.get("ids");
+    const selectedIds = idsParam
+        ? idsParam.split(",").map((id) => id.trim()).filter(Boolean)
+        : [];
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -47,6 +51,10 @@ export async function GET(req: Request) {
             whereClause.subjectId = subjectId;
         }
 
+        if (selectedIds.length > 0) {
+            whereClause.id = { in: selectedIds };
+        }
+
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突
         // 最终的 whereClause.AND 会包含所有需要同时满足的条件
         const andConditions: any[] = [];
@@ -57,7 +65,10 @@ export async function GET(req: Request) {
                 OR: [
                     { questionText: { contains: query } },
                     { analysis: { contains: query } },
+                    { wrongAnswerText: { contains: query } },
+                    { mistakeAnalysis: { contains: query } },
                     { knowledgePoints: { contains: query } },
+                    { abilityTagLinks: { some: { abilityTag: { name: { contains: query } } } } },
                 ]
             });
         }
@@ -152,6 +163,10 @@ export async function GET(req: Request) {
             include: {
                 subject: true,
                 tags: true,
+                abilityTagLinks: {
+                    include: { abilityTag: true },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                },
             },
             skip: (page - 1) * pageSize,
             take: pageSize,

@@ -64,3 +64,13 @@ dist-scripts
 *.log
 test_output*.txt
 upload_test_output*.txt
+exports/ability-analysis/
+
+# Local notes
+调用踩坑.md
+概括.md
+数学错题集能力标签.md
+化学错题集能力标签.md
+物理错题集能力标签.md
+生物错题集能力标签.md
+英语错题集能力标签.md

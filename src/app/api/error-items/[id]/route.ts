@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
+import { normalizeMistakeStatus } from "@/lib/ability-tags";
 
 const logger = createLogger('api:error-items:id');
 
@@ -39,6 +40,10 @@ export async function GET(
             include: {
                 subject: true,
                 tags: true, // 包含标签关联
+                abilityTagLinks: {
+                    include: { abilityTag: true },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                },
             },
         });
 
@@ -82,7 +87,7 @@ export async function PUT(
         }
 
         const body = await req.json();
-        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis } = body;
+        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, wrongAnswerText, mistakeAnalysis, mistakeStatus } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
@@ -104,6 +109,13 @@ export async function PUT(
         if (questionText !== undefined) updateData.questionText = questionText;
         if (answerText !== undefined) updateData.answerText = answerText;
         if (analysis !== undefined) updateData.analysis = analysis;
+        if (wrongAnswerText !== undefined) updateData.wrongAnswerText = wrongAnswerText || null;
+        if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
+        if (mistakeStatus !== undefined || wrongAnswerText !== undefined || mistakeAnalysis !== undefined) {
+            updateData.mistakeStatus = normalizeMistakeStatus(
+                wrongAnswerText || mistakeAnalysis ? 'wrong_attempt' : mistakeStatus
+            ) || null;
+        }
 
         // 处理 knowledgePoints (标签)
         if (knowledgePoints !== undefined) {
@@ -169,7 +181,13 @@ export async function PUT(
         const updated = await prisma.errorItem.update({
             where: { id },
             data: updateData,
-            include: { tags: true },
+            include: {
+                tags: true,
+                abilityTagLinks: {
+                    include: { abilityTag: true },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                },
+            },
         });
 
         return NextResponse.json(updated);

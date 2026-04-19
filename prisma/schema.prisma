@@ -29,6 +29,7 @@ model User {
   subjects   Subject[]
   practiceRecords PracticeRecord[]
   customTags KnowledgeTag[] // User's custom tags
+  customAbilityTags AbilityTag[] // User's custom abstract ability tags
 }
 
 // 统一知识点标签表 (支持无限层级)
@@ -92,10 +93,14 @@ model ErrorItem {
   questionText     String? // Parsed question
   answerText       String? // AI provided answer
   analysis         String? // AI analysis/explanation
+  wrongAnswerText  String? // Student's wrong answer/work if visible
+  mistakeAnalysis  String? // Analysis of why the wrong answer happened
+  mistakeStatus    String? // not_attempted, wrong_attempt, unknown
   knowledgePoints  String? // [DEPRECATED] JSON string - kept for migration only
   
   // New: many-to-many relation with KnowledgeTag
   tags             KnowledgeTag[]
+  abilityTagLinks  ErrorItemAbilityTag[]
   
   // User Metadata
   source           String? // e.g. "Midterm Exam"
@@ -110,6 +115,44 @@ model ErrorItem {
   updatedAt        DateTime @updatedAt
 
   reviewSchedules ReviewSchedule[]
+}
+
+// 抽象能力标签表（与 KnowledgeTag 分离，避免污染知识点体系）
+model AbilityTag {
+  id          String   @id @default(cuid())
+  name        String
+  subject     String   // math, english, physics, ...
+  description String?
+  order       Int      @default(0)
+  code        String?  @unique
+  isSystem    Boolean  @default(false)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  errorItemLinks ErrorItemAbilityTag[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subject, name, userId])
+  @@index([subject])
+  @@index([userId])
+}
+
+// 错题与抽象能力标签的关联，可记录来源（AI / 手动）
+model ErrorItemAbilityTag {
+  id           String    @id @default(cuid())
+  errorItemId  String
+  errorItem    ErrorItem @relation(fields: [errorItemId], references: [id], onDelete: Cascade)
+  abilityTagId String
+  abilityTag   AbilityTag @relation(fields: [abilityTagId], references: [id], onDelete: Cascade)
+  source       String    @default("manual") // ai, manual
+  order        Int       @default(0)
+  createdAt    DateTime  @default(now())
+
+  @@unique([errorItemId, abilityTagId])
+  @@index([abilityTagId])
+  @@index([source])
 }
 
 model ReviewSchedule {
