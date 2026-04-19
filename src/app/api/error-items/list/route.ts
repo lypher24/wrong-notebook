@@ -157,7 +157,7 @@ export async function GET(req: Request) {
                 tags: true,
                 abilityTagLinks: {
                     include: { abilityTag: true },
-                    orderBy: { createdAt: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 },
             },
             skip: (page - 1) * pageSize,

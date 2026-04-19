@@ -38,6 +38,7 @@ export interface ErrorItemAbilityTag {
     errorItemId: string;
     abilityTagId: string;
     source: 'ai' | 'manual' | string;
+    order?: number;
     abilityTag: AbilityTag;
 }
 

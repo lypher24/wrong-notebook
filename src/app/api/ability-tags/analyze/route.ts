@@ -1,21 +1,34 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getAIService } from "@/lib/ai";
-import { ensureSystemAbilityTags, inferAbilitySubject, normalizeAbilityTagNames } from "@/lib/ability-tags";
-import { forbidden, unauthorized, internalError } from "@/lib/api-errors";
+import { ensureSystemAbilityTags, inferAbilitySubject } from "@/lib/ability-tags";
+import { badRequest, unauthorized, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:ability-tags:analyze');
 
-type SummaryCandidate = {
+type KnowledgePointSource = { knowledgePoints?: string | null; tags?: { name: string }[] };
+type SummaryCandidate = KnowledgePointSource & {
+    subject?: { name?: string | null } | null;
+    gradeSemester?: string | null;
     mistakeStatus?: string | null;
-    knowledgePoints?: string | null;
-    tags?: { name: string }[];
 };
 
-function parseKnowledgePoints(item: { knowledgePoints?: string | null; tags?: { name: string }[] }) {
+type TagRef = { id: string; name: string; subject: string; isSystem: boolean; userId?: string | null };
+
+type AnalyzeItemResponse = {
+    id: string;
+    generatedTags: string[];
+    libraryTags: string[];
+    finalTags: string[];
+    status: 'updated' | 'skipped' | 'no_result';
+    reason?: string;
+};
+
+function parseKnowledgePoints(item: KnowledgePointSource) {
     if (item.tags && item.tags.length > 0) {
         return item.tags.map(tag => tag.name);
     }
@@ -28,29 +41,93 @@ function parseKnowledgePoints(item: { knowledgePoints?: string | null; tags?: { 
     }
 }
 
+function normalizeTagNames(names: unknown, max = 2): string[] {
+    if (!Array.isArray(names)) return [];
+    return names
+        .map(name => String(name || '').trim())
+        .filter(Boolean)
+        .filter((name, index, arr) => arr.indexOf(name) === index)
+        .slice(0, max);
+}
+
 function buildOverallSummary(items: SummaryCandidate[]) {
+    const subjectStats = new Map<string, number>();
+    const gradeStats = new Map<string, number>();
     const statusStats = new Map<string, number>();
     const tagStats = new Map<string, number>();
 
     for (const item of items) {
+        const subject = inferAbilitySubject(item.subject?.name);
+        subjectStats.set(subject, (subjectStats.get(subject) || 0) + 1);
+
+        const grade = item.gradeSemester || 'unknown';
+        gradeStats.set(grade, (gradeStats.get(grade) || 0) + 1);
+
         const status = item.mistakeStatus || 'unknown';
         statusStats.set(status, (statusStats.get(status) || 0) + 1);
+
         for (const tag of parseKnowledgePoints(item)) {
             tagStats.set(tag, (tagStats.get(tag) || 0) + 1);
         }
     }
 
-    const topTags = Array.from(tagStats.entries())
+    const formatStats = (stats: Map<string, number>, limit = 10) => Array.from(stats.entries())
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .map(([name, count]) => `${name}(${count})`)
-        .join('、') || '无';
-
-    const statuses = Array.from(statusStats.entries())
+        .slice(0, limit)
         .map(([name, count]) => `${name}:${count}`)
         .join('、') || '无';
 
-    return `本批候选错题共 ${items.length} 道。作答状态分布：${statuses}。高频知识点：${topTags}。`;
+    const topKnowledgePoints = Array.from(tagStats.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([name, count]) => `${name}(${count})`)
+        .join('、') || '无';
+
+    return [
+        `本次用户主动选中错题共 ${items.length} 道。`,
+        `学科分布：${formatStats(subjectStats)}。`,
+        `年级/学期分布：${formatStats(gradeStats, 6)}。`,
+        `作答状态分布：${formatStats(statusStats)}。`,
+        `高频知识点：${topKnowledgePoints}。`,
+        `请先基于这些分布和错题内容归纳共性薄弱点，再把薄弱点反向关联到每道题。`,
+    ].join('');
+}
+
+async function findOrCreateGeneratedTag(
+    tx: Prisma.TransactionClient,
+    tagName: string,
+    subject: string,
+    userId: string,
+    systemTagBySubjectAndName: Map<string, TagRef>,
+    createdGeneratedTagKeys: Set<string>
+): Promise<TagRef> {
+    const systemTag = systemTagBySubjectAndName.get(`${subject}:${tagName}`);
+    if (systemTag) return systemTag;
+
+    const existing = await tx.abilityTag.findFirst({
+        where: {
+            name: tagName,
+            subject,
+            userId,
+            isSystem: false,
+        },
+        select: { id: true, name: true, subject: true, isSystem: true, userId: true },
+    });
+    if (existing) return existing;
+
+    const created = await tx.abilityTag.create({
+        data: {
+            name: tagName,
+            subject,
+            isSystem: false,
+            userId,
+            description: 'AI 根据一组选中错题自动归纳的能力薄弱点',
+            order: 1000,
+        },
+        select: { id: true, name: true, subject: true, isSystem: true, userId: true },
+    });
+    createdGeneratedTagKeys.add(`${subject}:${tagName}`);
+    return created;
 }
 
 export async function POST(req: Request) {
@@ -64,85 +141,69 @@ export async function POST(req: Request) {
         await ensureSystemAbilityTags();
 
         const body = await req.json();
-        const subjectId = body.subjectId as string | undefined;
-        const onlyUnclassified = body.onlyUnclassified !== false;
-        const batchSize = Math.min(20, Math.max(1, Number(body.batchSize || 8)));
-        const offset = Math.max(0, Number(body.offset || 0));
+        const selectedIds: string[] = Array.isArray(body.errorItemIds)
+            ? body.errorItemIds.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+            : [];
+        const errorItemIds: string[] = Array.from(new Set(selectedIds));
 
-        let selectedSubjectKey: string | undefined;
-        if (subjectId) {
-            const subject = await prisma.subject.findFirst({
-                where: { id: subjectId, userId: user.id },
-                select: { name: true },
-            });
-            if (!subject) return forbidden("Notebook not found or not owned by current user");
-            selectedSubjectKey = inferAbilitySubject(subject.name);
+        if (errorItemIds.length === 0) {
+            return badRequest("Please select at least one error item");
         }
 
-        const availableTags = await prisma.abilityTag.findMany({
+        const selectedItems = await prisma.errorItem.findMany({
             where: {
-                ...(selectedSubjectKey ? { subject: selectedSubjectKey } : {}),
-                OR: [
-                    { isSystem: true },
-                    { userId: user.id },
-                ],
+                userId: user.id,
+                id: { in: errorItemIds },
+            },
+            include: {
+                subject: true,
+                tags: true,
+                abilityTagLinks: {
+                    include: { abilityTag: true },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                },
+            },
+        });
+
+        const itemById = new Map(selectedItems.map(item => [item.id, item]));
+        const orderedItems = errorItemIds.map(id => itemById.get(id)).filter(Boolean) as typeof selectedItems;
+
+        if (orderedItems.length === 0) {
+            return NextResponse.json({
+                selected: errorItemIds.length,
+                processed: 0,
+                updated: 0,
+                skipped: errorItemIds.length,
+                noResult: errorItemIds.length,
+                invalidTags: 0,
+                createdGeneratedTags: 0,
+                batchSummary: '',
+                commonPatterns: [],
+                items: [],
+                message: '没有找到可分析的选中错题',
+            });
+        }
+
+        const selectedSubjects = Array.from(new Set(orderedItems.map(item => inferAbilitySubject(item.subject?.name))));
+        const systemLibraryTags = await prisma.abilityTag.findMany({
+            where: {
+                isSystem: true,
+                subject: { in: selectedSubjects },
             },
             orderBy: [
                 { subject: 'asc' },
                 { order: 'asc' },
                 { name: 'asc' },
             ],
+            select: { id: true, name: true, subject: true, description: true, isSystem: true, userId: true },
         });
-
-        const availableSubjects = new Set(availableTags.map(tag => tag.subject));
-        if (selectedSubjectKey && !availableSubjects.has(selectedSubjectKey)) {
-            return NextResponse.json({
-                processed: 0,
-                updated: 0,
-                remaining: 0,
-                nextOffset: offset,
-                message: "当前学科暂无能力标签库",
-                items: [],
-            });
-        }
-
-        const allCandidates = await prisma.errorItem.findMany({
-            where: {
-                userId: user.id,
-                ...(subjectId ? { subjectId } : {}),
-                ...(onlyUnclassified ? { abilityTagLinks: { none: {} } } : {}),
-            },
-            orderBy: { createdAt: 'asc' },
-            include: {
-                subject: true,
-                tags: true,
-                abilityTagLinks: { include: { abilityTag: true } },
-            },
-        });
-
-        const analyzableCandidates = allCandidates.filter(item =>
-            availableSubjects.has(inferAbilitySubject(item.subject?.name))
-        );
-
-        const batch = onlyUnclassified
-            ? analyzableCandidates.slice(0, batchSize)
-            : analyzableCandidates.slice(offset, offset + batchSize);
-
-        if (batch.length === 0) {
-            return NextResponse.json({
-                processed: 0,
-                updated: 0,
-                remaining: 0,
-                nextOffset: offset,
-                items: [],
-            });
-        }
 
         const aiService = getAIService();
-        const results = await aiService.analyzeAbilityTags(
-            batch.map(item => ({
+        const aiResult = await aiService.analyzeAbilityTags(
+            orderedItems.map(item => ({
                 id: item.id,
                 subject: inferAbilitySubject(item.subject?.name),
+                gradeSemester: item.gradeSemester,
                 questionText: item.questionText,
                 answerText: item.answerText,
                 analysis: item.analysis,
@@ -150,71 +211,136 @@ export async function POST(req: Request) {
                 wrongAnswerText: item.wrongAnswerText,
                 mistakeAnalysis: item.mistakeAnalysis,
                 mistakeStatus: item.mistakeStatus,
+                existingAbilityTags: item.abilityTagLinks.map(link => ({
+                    name: link.abilityTag.name,
+                    source: link.source,
+                })),
             })),
-            availableTags.map(tag => ({
+            systemLibraryTags.map(tag => ({
                 name: tag.name,
                 subject: tag.subject,
                 description: tag.description,
             })),
-            buildOverallSummary(analyzableCandidates)
+            buildOverallSummary(orderedItems)
         );
 
-        const tagBySubjectAndName = new Map<string, { id: string; name: string; subject: string }>();
-        for (const tag of availableTags) {
-            tagBySubjectAndName.set(`${tag.subject}:${tag.name}`, tag);
+        const systemTagBySubjectAndName = new Map<string, TagRef>();
+        for (const tag of systemLibraryTags) {
+            systemTagBySubjectAndName.set(`${tag.subject}:${tag.name}`, tag);
         }
 
-        const batchById = new Map(batch.map(item => [item.id, item]));
-        const updatedItems: { id: string; tags: string[] }[] = [];
+        const aiResultById = new Map<string, typeof aiResult.items[number]>();
+        for (const result of aiResult.items) {
+            if (!aiResultById.has(result.errorItemId)) {
+                aiResultById.set(result.errorItemId, result);
+            }
+        }
 
-        for (const result of results) {
-            const item = batchById.get(result.errorItemId);
-            if (!item) continue;
+        const responseItems: AnalyzeItemResponse[] = [];
+        const createdGeneratedTagKeys = new Set<string>();
+        let invalidTags = 0;
 
-            const subjectKey = inferAbilitySubject(item.subject?.name);
-            const tagIds = normalizeAbilityTagNames(result.tags)
-                .map(name => tagBySubjectAndName.get(`${subjectKey}:${name}`))
-                .filter(Boolean)
-                .map(tag => tag!.id);
+        await prisma.$transaction(async (tx) => {
+            await tx.errorItemAbilityTag.deleteMany({
+                where: {
+                    errorItemId: { in: orderedItems.map(item => item.id) },
+                    source: 'ai',
+                },
+            });
 
-            await prisma.$transaction(async (tx) => {
-                await tx.errorItemAbilityTag.deleteMany({
-                    where: { errorItemId: item.id },
-                });
+            for (const item of orderedItems) {
+                const result = aiResultById.get(item.id);
+                if (!result) {
+                    responseItems.push({
+                        id: item.id,
+                        generatedTags: [],
+                        libraryTags: [],
+                        finalTags: [],
+                        status: 'no_result',
+                    });
+                    continue;
+                }
 
-                for (const tagId of tagIds) {
+                const subjectKey = inferAbilitySubject(item.subject?.name);
+                const manualTagIds = new Set(
+                    item.abilityTagLinks
+                        .filter(link => link.source === 'manual')
+                        .map(link => link.abilityTagId)
+                );
+                const manualTagNames = new Set(
+                    item.abilityTagLinks
+                        .filter(link => link.source === 'manual')
+                        .map(link => link.abilityTag.name)
+                );
+                const usedTagIds = new Set<string>();
+                const usedTagNames = new Set<string>();
+                const finalTags: { id: string; name: string; sourceGroup: 'generated' | 'library'; order: number }[] = [];
+
+                const generatedTags = normalizeTagNames(result.generatedTags, 2);
+                const libraryTags = normalizeTagNames(result.libraryTags, 2);
+
+                for (const [index, tagName] of generatedTags.entries()) {
+                    const tag = await findOrCreateGeneratedTag(tx, tagName, subjectKey, user.id, systemTagBySubjectAndName, createdGeneratedTagKeys);
+                    if (usedTagIds.has(tag.id) || usedTagNames.has(tag.name)) continue;
+                    usedTagIds.add(tag.id);
+                    usedTagNames.add(tag.name);
+                    finalTags.push({ id: tag.id, name: tag.name, sourceGroup: 'generated', order: index });
+                }
+
+                for (const [index, tagName] of libraryTags.entries()) {
+                    const tag = systemTagBySubjectAndName.get(`${subjectKey}:${tagName}`);
+                    if (!tag) {
+                        invalidTags += 1;
+                        continue;
+                    }
+                    if (usedTagIds.has(tag.id) || usedTagNames.has(tag.name)) continue;
+                    usedTagIds.add(tag.id);
+                    usedTagNames.add(tag.name);
+                    finalTags.push({ id: tag.id, name: tag.name, sourceGroup: 'library', order: 10 + index });
+                }
+
+                for (const tag of finalTags) {
+                    if (manualTagIds.has(tag.id) || manualTagNames.has(tag.name)) continue;
                     await tx.errorItemAbilityTag.create({
                         data: {
                             errorItemId: item.id,
-                            abilityTagId: tagId,
+                            abilityTagId: tag.id,
                             source: 'ai',
+                            order: tag.order,
                         },
                     });
                 }
-            });
 
-            updatedItems.push({
-                id: item.id,
-                tags: tagIds
-                    .map(id => availableTags.find(tag => tag.id === id)?.name)
-                    .filter(Boolean) as string[],
-            });
-        }
+                responseItems.push({
+                    id: item.id,
+                    generatedTags,
+                    libraryTags,
+                    finalTags: finalTags.map(tag => tag.name),
+                    status: finalTags.length > 0 ? 'updated' : 'skipped',
+                    reason: result.reason,
+                });
+            }
+        });
 
-        const processed = batch.length;
-        const remaining = onlyUnclassified
-            ? Math.max(0, analyzableCandidates.length - processed)
-            : Math.max(0, analyzableCandidates.length - (offset + processed));
+        const missingSelectedCount = Math.max(0, errorItemIds.length - orderedItems.length);
+        const updated = responseItems.filter(item => item.status === 'updated').length;
+        const skipped = responseItems.filter(item => item.status === 'skipped').length;
+        const noResult = responseItems.filter(item => item.status === 'no_result').length + missingSelectedCount;
 
         return NextResponse.json({
-            processed,
-            updated: updatedItems.length,
-            remaining,
-            nextOffset: onlyUnclassified ? 0 : offset + processed,
-            items: updatedItems,
+            selected: errorItemIds.length,
+            processed: orderedItems.length,
+            updated,
+            skipped,
+            noResult,
+            invalidTags,
+            createdGeneratedTags: createdGeneratedTagKeys.size,
+            batchSummary: aiResult.batchSummary || '',
+            commonPatterns: aiResult.commonPatterns || [],
+            items: responseItems,
         });
     } catch (error) {
-        logger.error({ error }, 'Ability tag batch analysis failed');
+        logger.error({ error }, 'Ability tag selected-item analysis failed');
         return internalError("Failed to analyze ability tags");
     }
 }

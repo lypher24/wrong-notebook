@@ -42,7 +42,7 @@ export async function GET(
                 tags: true, // 包含标签关联
                 abilityTagLinks: {
                     include: { abilityTag: true },
-                    orderBy: { createdAt: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 },
             },
         });
@@ -185,7 +185,7 @@ export async function PUT(
                 tags: true,
                 abilityTagLinks: {
                     include: { abilityTag: true },
-                    orderBy: { createdAt: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 },
             },
         });

@@ -210,38 +210,69 @@ describe('AI Prompts', () => {
 
     describe('ability analysis prompt', () => {
         it('应该生成能力标签批量分析提示词', () => {
+            const longAnalysis = '完整解析'.repeat(500);
             const prompt = generateAbilityAnalysisPrompt(
                 [{
                     id: 'item-1',
                     subject: 'math',
+                    gradeSemester: '七年级上',
                     questionText: '求解方程 x + 1 = 3',
                     answerText: 'x = 2',
-                    analysis: '移项即可',
+                    analysis: longAnalysis,
                     knowledgePoints: ['一元一次方程'],
                     mistakeStatus: 'wrong_attempt',
                     wrongAnswerText: 'x = 4',
                     mistakeAnalysis: '移项符号错误',
+                    existingAbilityTags: [{ name: '旧标签', source: 'ai' }],
                 }],
                 [{ subject: 'math', name: '运算规则与变形', description: '变形规则不稳' }],
                 '共 1 道题'
             );
 
             expect(prompt).toContain('item-1');
+            expect(prompt).toContain('通盘观察所有题目');
+            expect(prompt).toContain('generated_tags');
+            expect(prompt).toContain('library_tags');
             expect(prompt).toContain('运算规则与变形');
+            expect(prompt).toContain('旧标签(ai)');
+            expect(prompt).toContain(longAnalysis);
             expect(prompt).not.toContain('{{items}}');
             expect(prompt).not.toContain('{{ability_tags}}');
         });
 
-        it('应该解析 ability_results 响应', () => {
+        it('应该解析新版 ability_results 响应', () => {
+            const parsed = parseAbilityAnalysisResponse(`
+<ability_results>
+{
+  "batch_summary": "整体薄弱点总结",
+  "common_patterns": ["条件提取不足"],
+  "items": [
+    {"id":"item-1","generated_tags":["条件转化不稳定"],"library_tags":["审题理解","检验与反思"],"reason":"漏看条件"}
+  ]
+}
+</ability_results>
+            `);
+
+            expect(parsed.batchSummary).toBe('整体薄弱点总结');
+            expect(parsed.commonPatterns).toEqual(['条件提取不足']);
+            expect(parsed.items).toHaveLength(1);
+            expect(parsed.items[0].errorItemId).toBe('item-1');
+            expect(parsed.items[0].generatedTags).toEqual(['条件转化不稳定']);
+            expect(parsed.items[0].libraryTags).toEqual(['审题理解', '检验与反思']);
+            expect(parsed.items[0].tags).toEqual(['条件转化不稳定', '审题理解', '检验与反思']);
+        });
+
+        it('应该兼容旧版数组格式 ability_results 响应', () => {
             const parsed = parseAbilityAnalysisResponse(`
 <ability_results>
 [{"id":"item-1","tags":["审题理解","检验与反思"],"reason":"漏看条件"}]
 </ability_results>
             `);
 
-            expect(parsed).toHaveLength(1);
-            expect(parsed[0].errorItemId).toBe('item-1');
-            expect(parsed[0].tags).toEqual(['审题理解', '检验与反思']);
+            expect(parsed.items).toHaveLength(1);
+            expect(parsed.items[0].errorItemId).toBe('item-1');
+            expect(parsed.items[0].generatedTags).toEqual([]);
+            expect(parsed.items[0].libraryTags).toEqual(['审题理解', '检验与反思']);
         });
     });
 });

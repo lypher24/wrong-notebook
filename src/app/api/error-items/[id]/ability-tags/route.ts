@@ -62,12 +62,13 @@ export async function PUT(
                 where: { errorItemId: id },
             });
 
-            for (const tagId of tagIds) {
+            for (const [index, tagId] of tagIds.entries()) {
                 await tx.errorItemAbilityTag.create({
                     data: {
                         errorItemId: id,
                         abilityTagId: tagId,
                         source: 'manual',
+                        order: 100 + index,
                     },
                 });
             }
@@ -78,7 +79,7 @@ export async function PUT(
             include: {
                 abilityTagLinks: {
                     include: { abilityTag: true },
-                    orderBy: { createdAt: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 },
             },
         });

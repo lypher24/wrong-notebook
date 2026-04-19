@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisResult } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisBatchResult } from "./types";
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateAbilityAnalysisPrompt, parseAbilityAnalysisResponse } from './prompts';
 import { safeParseParsedQuestion } from './schema';
 import { getAppConfig } from '../config';
@@ -348,7 +348,7 @@ export class GeminiProvider implements AIService {
         }
     }
 
-    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisResult[]> {
+    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisBatchResult> {
         const prompt = generateAbilityAnalysisPrompt(items, availableTags, overallSummary);
 
         logger.info({

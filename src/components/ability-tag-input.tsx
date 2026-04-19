@@ -60,7 +60,7 @@ export function AbilityTagInput({ value = [], onChange, subject, placeholder = "
 
     const addTag = (tag: string) => {
         const clean = tag.trim();
-        if (!clean || value.includes(clean) || value.length >= 3) return;
+        if (!clean || value.includes(clean) || value.length >= 4) return;
         onChange([...value, clean]);
         setInput("");
         setSuggestions([]);
@@ -107,11 +107,11 @@ export function AbilityTagInput({ value = [], onChange, subject, placeholder = "
                     ref={inputRef}
                     type="text"
                     value={input}
-                    disabled={value.length >= 3}
+                    disabled={value.length >= 4}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                    placeholder={value.length === 0 ? placeholder : value.length >= 3 ? "最多 3 个标签" : ""}
+                    placeholder={value.length === 0 ? placeholder : value.length >= 4 ? "最多 4 个标签" : ""}
                     className="flex-1 min-w-[120px] border-none focus-visible:ring-0 focus-visible:ring-offset-0 h-8 px-0"
                 />
             </div>

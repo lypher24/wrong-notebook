@@ -134,6 +134,7 @@ model AbilityTag {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([subject, name, userId])
   @@index([subject])
   @@index([userId])
 }
@@ -146,6 +147,7 @@ model ErrorItemAbilityTag {
   abilityTagId String
   abilityTag   AbilityTag @relation(fields: [abilityTagId], references: [id], onDelete: Cascade)
   source       String    @default("manual") // ai, manual
+  order        Int       @default(0)
   createdAt    DateTime  @default(now())
 
   @@unique([errorItemId, abilityTagId])

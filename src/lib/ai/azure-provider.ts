@@ -1,5 +1,5 @@
 import { AzureOpenAI } from "openai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisResult } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisBatchResult } from "./types";
 import { jsonrepair } from "jsonrepair";
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateAbilityAnalysisPrompt, parseAbilityAnalysisResponse } from './prompts';
 import { getAppConfig } from '../config';
@@ -395,7 +395,7 @@ Question: ${questionText}`;
         }
     }
 
-    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisResult[]> {
+    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisBatchResult> {
         const prompt = generateAbilityAnalysisPrompt(items, availableTags, overallSummary);
 
         logger.info({
@@ -412,7 +412,7 @@ Question: ${questionText}`;
                     { role: "system", content: prompt },
                     { role: "user", content: "请按要求输出 <ability_results>。" }
                 ],
-                max_tokens: 4096,
+                max_tokens: 8192,
             });
 
             if (!response || !response.choices || response.choices.length === 0) {

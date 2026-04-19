@@ -599,7 +599,7 @@ export default function ErrorDetailPage() {
                                                 value={abilityTagsInput}
                                                 onChange={setAbilityTagsInput}
                                                 subject={subjectKey}
-                                                placeholder={t.detail?.abilityTagsPlaceholder || '输入或选择能力标签，最多 3 个'}
+                                                placeholder={t.detail?.abilityTagsPlaceholder || '输入或选择能力标签，最多 4 个'}
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {t.detail?.abilityTagsHint || '💡 能力标签用于归纳薄弱点，不会影响知识点标签'}

@@ -68,5 +68,5 @@ export function normalizeAbilityTagNames(names: unknown): string[] {
         .map((name) => String(name || '').trim())
         .filter(Boolean)
         .filter((name, index, arr) => arr.indexOf(name) === index)
-        .slice(0, 3);
+        .slice(0, 4);
 }

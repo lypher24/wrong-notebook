@@ -409,7 +409,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
                                             <Badge variant={item.mistakeStatus === "wrong_attempt" ? "default" : "secondary"} className="text-xs">
                                                 {getMistakeStatusLabel(item.mistakeStatus, language)}
                                             </Badge>
-                                            {abilityTags.slice(0, 3).map((tag) => (
+                                            {abilityTags.slice(0, 4).map((tag) => (
                                                 <Badge key={tag} variant="outline" className="text-xs border-dashed">
                                                     {tag}
                                                 </Badge>
