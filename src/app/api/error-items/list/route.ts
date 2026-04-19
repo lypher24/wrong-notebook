@@ -17,6 +17,10 @@ export async function GET(req: Request) {
     const mastery = searchParams.get("mastery");
     const timeRange = searchParams.get("timeRange");
     const tag = searchParams.get("tag");
+    const idsParam = searchParams.get("ids");
+    const selectedIds = idsParam
+        ? idsParam.split(",").map((id) => id.trim()).filter(Boolean)
+        : [];
 
     // 分页参数
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -45,6 +49,10 @@ export async function GET(req: Request) {
 
         if (subjectId) {
             whereClause.subjectId = subjectId;
+        }
+
+        if (selectedIds.length > 0) {
+            whereClause.id = { in: selectedIds };
         }
 
         // 搜索条件需要使用 AND 包装，避免与其他 OR 条件冲突

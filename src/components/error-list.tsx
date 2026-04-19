@@ -62,7 +62,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
     const { t, language } = useLanguage();
     const router = useRouter();
 
-    const handleExportPrint = () => {
+    const buildPrintParams = (ids?: string[]) => {
         const params = new URLSearchParams();
         if (subjectId) params.append("subjectId", subjectId);
         if (search) params.append("query", search);
@@ -78,7 +78,19 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
         if (gradeFilter) params.append("gradeSemester", gradeFilter);
         if (chapterFilter) params.append("chapter", chapterFilter); // 章节筛选
         if (paperLevelFilter !== "all") params.append("paperLevel", paperLevelFilter);
+        if (ids && ids.length > 0) params.append("ids", ids.join(","));
 
+        return params;
+    };
+
+    const handleExportPrint = () => {
+        const params = buildPrintParams();
+        router.push(`/print-preview?${params.toString()}`);
+    };
+
+    const handlePrintSelected = () => {
+        if (selectedIds.size === 0) return;
+        const params = buildPrintParams(Array.from(selectedIds));
         router.push(`/print-preview?${params.toString()}`);
     };
 
@@ -477,6 +489,14 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
                             >
                                 <X className="mr-2 h-4 w-4" />
                                 {t.notebook?.cancelSelect || "取消"}
+                            </Button>
+                            <Button
+                                variant="default"
+                                onClick={handlePrintSelected}
+                                disabled={selectedIds.size === 0}
+                            >
+                                <Printer className="mr-2 h-4 w-4" />
+                                {t.notebook?.printSelected || "打印选中"}
                             </Button>
                             <Button
                                 variant="destructive"
