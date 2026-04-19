@@ -37,6 +37,8 @@ interface AnalyzeResponse {
     createdGeneratedTags: number;
     batchSummary?: string;
     commonPatterns?: string[];
+    reportPath?: string;
+    reportSaveError?: string;
     message?: string;
     items: AnalyzeItemResult[];
 }
@@ -331,6 +333,15 @@ export default function AbilityTagsPage() {
                                 <Badge variant="outline">忽略无效库内标签 {analysisResult.invalidTags}</Badge>
                                 <Badge variant="outline">新建自主标签 {analysisResult.createdGeneratedTags}</Badge>
                             </div>
+                            {analysisResult.reportPath && (
+                                <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                                    <div className="font-medium">本次分析报告已保存到本地 Markdown 文件：</div>
+                                    <code className="mt-1 block break-all text-xs">{analysisResult.reportPath}</code>
+                                </div>
+                            )}
+                            {analysisResult.reportSaveError && (
+                                <p className="text-sm text-destructive">{analysisResult.reportSaveError}</p>
+                            )}
                             {analysisResult.batchSummary && (
                                 <p className="text-sm leading-6 whitespace-pre-wrap">{analysisResult.batchSummary}</p>
                             )}

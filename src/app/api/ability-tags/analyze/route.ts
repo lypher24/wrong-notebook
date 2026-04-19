@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
+import { promises as fs } from "fs";
+import path from "path";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -27,6 +29,102 @@ type AnalyzeItemResponse = {
     status: 'updated' | 'skipped' | 'no_result';
     reason?: string;
 };
+
+function formatReportTimestamp(date = new Date()) {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+        '-',
+        pad(date.getHours()),
+        pad(date.getMinutes()),
+        pad(date.getSeconds()),
+    ].join('');
+}
+
+function escapeTableCell(value: string | undefined) {
+    return (value || '')
+        .replace(/\r?\n/g, '<br>')
+        .replace(/\|/g, '\\|')
+        .trim();
+}
+
+function buildAbilityAnalysisMarkdown(params: {
+    timestamp: string;
+    userEmail: string;
+    selected: number;
+    processed: number;
+    updated: number;
+    skipped: number;
+    noResult: number;
+    invalidTags: number;
+    createdGeneratedTags: number;
+    batchSummary?: string;
+    commonPatterns?: string[];
+    items: AnalyzeItemResponse[];
+    selectedItems: Array<{
+        id: string;
+        subject?: { name?: string | null } | null;
+        gradeSemester?: string | null;
+        questionText?: string | null;
+    }>;
+}) {
+    const itemInfoById = new Map(params.selectedItems.map(item => [item.id, item]));
+    const lines = [
+        '# 抽象能力标签分析报告',
+        '',
+        `- 生成时间：${params.timestamp}`,
+        `- 用户：${params.userEmail}`,
+        `- 选中题目：${params.selected}`,
+        `- 实际处理：${params.processed}`,
+        `- 成功更新：${params.updated}`,
+        `- 跳过：${params.skipped}`,
+        `- 无返回：${params.noResult}`,
+        `- 忽略无效库内标签：${params.invalidTags}`,
+        `- 新建 AI 自主标签：${params.createdGeneratedTags}`,
+        '',
+        '## 整体诊断',
+        '',
+        params.batchSummary?.trim() || '无',
+        '',
+        '## 共性薄弱点',
+        '',
+        ...(params.commonPatterns && params.commonPatterns.length > 0
+            ? params.commonPatterns.map(pattern => `- ${pattern}`)
+            : ['无']),
+        '',
+        '## 逐题标签结果',
+        '',
+        '| 题目ID | 学科 | 年级/学期 | 状态 | AI自主标签 | 库内标签 | 最终标签 | 原因 | 题目 |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ];
+
+    for (const item of params.items) {
+        const source = itemInfoById.get(item.id);
+        lines.push(`| ${[
+            item.id,
+            escapeTableCell(source?.subject?.name || '未分类'),
+            escapeTableCell(source?.gradeSemester || ''),
+            item.status,
+            escapeTableCell(item.generatedTags.join('、')),
+            escapeTableCell(item.libraryTags.join('、')),
+            escapeTableCell(item.finalTags.join('、')),
+            escapeTableCell(item.reason || ''),
+            escapeTableCell(source?.questionText || ''),
+        ].join(' | ')} |`);
+    }
+
+    return `${lines.join('\n')}\n`;
+}
+
+async function saveAbilityAnalysisReport(markdown: string, timestamp: string) {
+    const reportDir = path.join(process.cwd(), 'exports', 'ability-analysis');
+    await fs.mkdir(reportDir, { recursive: true });
+    const reportPath = path.join(reportDir, `ability-analysis-${timestamp}.md`);
+    await fs.writeFile(reportPath, markdown, 'utf-8');
+    return reportPath;
+}
 
 function parseKnowledgePoints(item: KnowledgePointSource) {
     if (item.tags && item.tags.length > 0) {
@@ -326,6 +424,31 @@ export async function POST(req: Request) {
         const updated = responseItems.filter(item => item.status === 'updated').length;
         const skipped = responseItems.filter(item => item.status === 'skipped').length;
         const noResult = responseItems.filter(item => item.status === 'no_result').length + missingSelectedCount;
+        const timestamp = formatReportTimestamp();
+        let reportPath: string | undefined;
+        let reportSaveError: string | undefined;
+
+        try {
+            const markdown = buildAbilityAnalysisMarkdown({
+                timestamp,
+                userEmail: session.user.email,
+                selected: errorItemIds.length,
+                processed: orderedItems.length,
+                updated,
+                skipped,
+                noResult,
+                invalidTags,
+                createdGeneratedTags: createdGeneratedTagKeys.size,
+                batchSummary: aiResult.batchSummary || '',
+                commonPatterns: aiResult.commonPatterns || [],
+                items: responseItems,
+                selectedItems: orderedItems,
+            });
+            reportPath = await saveAbilityAnalysisReport(markdown, timestamp);
+        } catch (reportError) {
+            logger.error({ reportError }, 'Failed to save ability analysis markdown report');
+            reportSaveError = '能力标签分析结果已保存到数据库，但 Markdown 报告文件保存失败';
+        }
 
         return NextResponse.json({
             selected: errorItemIds.length,
@@ -337,6 +460,8 @@ export async function POST(req: Request) {
             createdGeneratedTags: createdGeneratedTagKeys.size,
             batchSummary: aiResult.batchSummary || '',
             commonPatterns: aiResult.commonPatterns || [],
+            reportPath,
+            reportSaveError,
             items: responseItems,
         });
     } catch (error) {
