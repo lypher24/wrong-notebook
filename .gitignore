@@ -59,12 +59,15 @@ dist-scripts
 *.db-journal
 *.sqlite
 *.sqlite-journal
-/data/codex-wrong-book/
 
 # Logs & Output
 *.log
 test_output*.txt
 upload_test_output*.txt
 
+# Local notes
 调用踩坑.md
 概括.md
+
+概括V20260419.md
+数学错题集能力标签.md

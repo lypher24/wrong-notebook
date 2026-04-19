@@ -49,25 +49,6 @@ describe('AI Prompts', () => {
             expect(prompt).toContain('数学');
         });
 
-        it('数学分析提示词应该包含优先巧解规则', () => {
-            const prompt = generateAnalyzePrompt('zh', 8, '数学');
-            expect(prompt).toContain('【学科解析策略 (SUBJECT-SPECIFIC ANALYSIS STRATEGY)】');
-            expect(prompt).toContain('若存在基于题目条件的更简洁解法，优先采用。');
-            expect(prompt).toContain('不要先走机械展开、死算、硬算。');
-        });
-
-        it('非数学分析提示词不应包含数学巧解规则', () => {
-            const prompt = generateAnalyzePrompt('zh', null, '物理');
-            expect(prompt).not.toContain('若存在基于题目条件的更简洁解法，优先采用。');
-            expect(prompt).not.toContain('不要先走机械展开、死算、硬算。');
-        });
-
-        it('学科未知时，分析提示词应该带条件式数学规则', () => {
-            const prompt = generateAnalyzePrompt('zh');
-            expect(prompt).toContain('如果你判断本题是数学题，则遵守以下规则：');
-            expect(prompt).toContain('优先考虑巧算、凑整、整体代换、构造、对称、提公因式、配方、数形结合等更简洁方法。');
-        });
-
         it('应该根据年级过滤数学标签（初一）', () => {
             const prompt = generateAnalyzePrompt('zh', 7, '数学');
             // 初一应该只包含七年级的标签
@@ -106,8 +87,7 @@ describe('AI Prompts', () => {
             const prompt = generateAnalyzePrompt('zh', 8, '数学');
             // 检查常见的占位符是否已被替换
             expect(prompt).not.toContain('{{language_instruction}}');
-            expect(prompt).not.toContain('{{knowledge_points_list}}');
-            expect(prompt).not.toContain('{{subject_analysis_strategy_section}}');
+            expect(prompt).not.toContain('{{tag_list}}');
             expect(prompt).not.toContain('{{provider_hints}}');
         });
     });
@@ -178,22 +158,6 @@ describe('AI Prompts', () => {
             expect(prompt).toContain('数学');
         });
 
-        it('数学重新解题提示词应该包含优先巧解规则', () => {
-            const prompt = generateReanswerPrompt('zh', questionText, '数学');
-            expect(prompt).toContain('【学科解析策略 (SUBJECT-SPECIFIC ANALYSIS STRATEGY)】');
-            expect(prompt).toContain('若常规解有补充价值，只在主解后用 1-2 句简要补充，不完整展开第二套长解。');
-        });
-
-        it('非数学重新解题提示词不应包含数学巧解规则', () => {
-            const prompt = generateReanswerPrompt('zh', questionText, '物理');
-            expect(prompt).not.toContain('若存在基于题目条件的更简洁解法，优先采用。');
-        });
-
-        it('学科未知时，重新解题提示词应该带条件式数学规则', () => {
-            const prompt = generateReanswerPrompt('zh', questionText);
-            expect(prompt).toContain('如果你判断本题是数学题，则遵守以下规则：');
-        });
-
         it('应该支持自定义 provider hints', () => {
             const prompt = generateReanswerPrompt('zh', questionText, null, {
                 providerHints: '输出格式要求',
@@ -205,7 +169,6 @@ describe('AI Prompts', () => {
             const prompt = generateReanswerPrompt('zh', questionText, '数学');
             expect(prompt).not.toContain('{{question_text}}');
             expect(prompt).not.toContain('{{language_instruction}}');
-            expect(prompt).not.toContain('{{subject_analysis_strategy_section}}');
             expect(prompt).not.toContain('{{provider_hints}}');
         });
     });

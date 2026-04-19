@@ -21,36 +21,6 @@ export interface PromptOptions {
   prefetchedEnglishTags?: string[];
 }
 
-const MATH_ANALYSIS_STRATEGY_RULES = [
-  '若存在基于题目条件的更简洁解法，优先采用。',
-  '优先考虑巧算、凑整、整体代换、构造、对称、提公因式、配方、数形结合等更简洁方法。',
-  '不要先走机械展开、死算、硬算。',
-  '若常规解有补充价值，只在主解后用 1-2 句简要补充，不完整展开第二套长解。',
-  '若题目本身没有明显更简洁解法，再正常计算。',
-];
-
-function formatNumberedRules(rules: string[]): string {
-  return rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n');
-}
-
-function getSubjectAnalysisStrategySection(subject?: string | null): string {
-  const normalizedSubject = subject?.trim();
-
-  if (normalizedSubject === '数学') {
-    return `【学科解析策略 (SUBJECT-SPECIFIC ANALYSIS STRATEGY)】
-对于数学题，请遵守以下规则：
-${formatNumberedRules(MATH_ANALYSIS_STRATEGY_RULES)}`;
-  }
-
-  if (!normalizedSubject) {
-    return `【学科解析策略 (SUBJECT-SPECIFIC ANALYSIS STRATEGY)】
-如果你判断本题是数学题，则遵守以下规则：
-${formatNumberedRules(MATH_ANALYSIS_STRATEGY_RULES)}`;
-  }
-
-  return '';
-}
-
 export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
 你是一位世界顶尖的、经验丰富的、专业的跨学科考试分析专家（Interdisciplinary Exam Analysis Expert）。你的核心任务是极致准确地分析用户提供的考试题目图片，全面理解所有文本、图表和隐含约束，并提供一个完整、高度结构化且专业的解决方案。
 
@@ -85,10 +55,7 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 在此处填写详细的步骤解析。
 * 必须使用简体中文。
 * **直接使用标准的 LaTeX 符号**（如 $\frac{1}{2}$），**不要**进行 JSON 转义（不要写成 \\frac）。
-* 解析要清晰、完整，适合学生理解。
 </analysis>
-
-{{subject_analysis_strategy_section}}
 
 【知识点标签列表（KNOWLEDGE POINT LIST）】
 {{knowledge_points_list}}
@@ -295,7 +262,6 @@ ${englishTagsString}`;
 
   return replaceVariables(template, {
     language_instruction: langInstruction,
-    subject_analysis_strategy_section: getSubjectAnalysisStrategySection(subject),
     knowledge_points_list: tagsSection,
     provider_hints: options?.providerHints || ''
   }).trim();
@@ -374,8 +340,6 @@ export const DEFAULT_REANSWER_TEMPLATE = `【角色与核心任务 (ROLE AND COR
 在此处填写知识点，使用逗号分隔，例如：知识点1, 知识点2, 知识点3
 </knowledge_points>
 
-{{subject_analysis_strategy_section}}
-
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
 1. **格式严格**：必须严格包含上述 3 个 XML 标签，不要输出其他内容。
 2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
@@ -410,7 +374,6 @@ export function generateReanswerPrompt(
     language_instruction: langInstruction,
     question_text: questionText,
     subject_hint: subjectHint,
-    subject_analysis_strategy_section: getSubjectAnalysisStrategySection(subject),
     provider_hints: options?.providerHints || ''
   }).trim();
 }

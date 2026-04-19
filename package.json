@@ -8,13 +8,11 @@
     "start": "next start",
     "lint": "eslint src",
     "test": "vitest run",
-    "test:codex-skill": "vitest run src/__tests__/unit/codex-wrong-book-store.test.ts",
     "test:unit": "vitest run src/__tests__/unit",
     "test:integration": "vitest run src/__tests__/integration",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "codex-skill:install": "node scripts/install-codex-wrongbook-skill.js",
     "test:report": "playwright show-report --host 0.0.0.0"
   },
   "dependencies": {
