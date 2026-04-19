@@ -18,8 +18,10 @@ function PrintPreviewContent() {
     const [showAnswers, setShowAnswers] = useState(false);
     const [showAnalysis, setShowAnalysis] = useState(false);
     const [showTags, setShowTags] = useState(false);
+    const [showAbilityTags, setShowAbilityTags] = useState(false);
     const [imageScale, setImageScale] = useState(70);
     const [showQuestionText, setShowQuestionText] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         fetchItems();
@@ -31,11 +33,34 @@ function PrintPreviewContent() {
             params.set("pageSize", String(PRINT_PREVIEW_PAGE_SIZE));
             const response = await apiClient.get<PaginatedResponse<ErrorItem>>(`/api/error-items/list?${params.toString()}`);
             setItems(response.items);
+            setSelectedIds(new Set(response.items.map((item) => item.id)));
         } catch (error) {
             console.error(error);
         } finally {
             setLoading(false);
         }
+    };
+
+    const selectedItems = items.filter((item) => selectedIds.has(item.id));
+
+    const toggleSelectItem = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const selectAllItems = () => {
+        setSelectedIds(new Set(items.map((item) => item.id)));
+    };
+
+    const clearSelectedItems = () => {
+        setSelectedIds(new Set());
     };
 
     const handlePrint = () => {
@@ -119,6 +144,53 @@ function PrintPreviewContent() {
                                 />
                                 {t.printPreview?.showTags || 'Show Tags'}
                             </label>
+                            <label className="flex items-center gap-1.5 text-xs sm:text-sm cursor-pointer whitespace-nowrap hover:text-primary transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={showAbilityTags}
+                                    onChange={(e) => setShowAbilityTags(e.target.checked)}
+                                    className="rounded border-gray-300 text-primary focus:ring-primary w-3.5 h-3.5 sm:w-4 sm:h-4"
+                                />
+                                {t.printPreview?.showAbilityTags || 'Show Ability Tags'}
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* Item Selection Row */}
+                    <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm font-medium">
+                                {t.printPreview?.selectItems || 'Select Items'} ({selectedItems.length}/{items.length})
+                            </div>
+                            <div className="flex gap-2">
+                                <Button variant="outline" size="sm" onClick={selectAllItems}>
+                                    {t.printPreview?.selectAll || 'Select All'}
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={clearSelectedItems}>
+                                    {t.printPreview?.clearSelection || 'Clear Selection'}
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 max-h-44 overflow-y-auto pr-1">
+                            {items.map((item, index) => (
+                                <label
+                                    key={item.id}
+                                    className="flex items-start gap-2 rounded border bg-background p-2 text-xs cursor-pointer hover:border-primary/50"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(item.id)}
+                                        onChange={() => toggleSelectItem(item.id)}
+                                        className="mt-0.5 rounded border-gray-300 text-primary focus:ring-primary"
+                                    />
+                                    <span className="line-clamp-2">
+                                        <span className="font-semibold">
+                                            {t.printPreview?.questionNumber?.replace('{num}', String(index + 1)) || `Question ${index + 1}`}
+                                        </span>
+                                        {item.questionText ? `：${item.questionText}` : ''}
+                                    </span>
+                                </label>
+                            ))}
                         </div>
                     </div>
                 </div>
@@ -126,7 +198,7 @@ function PrintPreviewContent() {
 
             {/* Print Content */}
             <div className="max-w-4xl mx-auto p-8 print:p-0">
-                {items.map((item, index) => {
+                {selectedItems.map((item, index) => {
                     // 优先使用 tags 关联，回退到 knowledgePoints
                     let tags: string[] = [];
                     if (item.tags && item.tags.length > 0) {
@@ -134,36 +206,67 @@ function PrintPreviewContent() {
                     } else {
                         try {
                             tags = JSON.parse(item.knowledgePoints || "[]");
-                        } catch (e) {
+                        } catch {
                             tags = [];
                         }
                     }
+                    const abilityTags = (item.abilityTagLinks || []).map(link => link.abilityTag.name);
 
                     return (
                         <div
                             key={item.id}
-                            className="mb-8 pb-8 border-b last:border-b-0 print:break-inside-avoid"
+                            className={`print:break-inside-avoid ${index > 0 ? "mt-16 pt-4 border-t print:mt-14 print:pt-3" : ""}`}
                         >
                             {/* Question Header */}
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-lg font-bold">{t.printPreview?.questionNumber?.replace('{num}', String(index + 1)) || `Question ${index + 1}`}</span>
-                                    {item.subject && (
-                                        <span className="text-sm text-muted-foreground">
-                                            {item.subject.name}
+                            <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2 leading-7">
+                                <span className="text-xl print:text-lg font-bold">
+                                    {t.printPreview?.questionNumber?.replace('{num}', String(index + 1)) || `Question ${index + 1}`}
+                                </span>
+                                {item.subject && (
+                                    <span className="text-sm print:text-xs text-muted-foreground">
+                                        {item.subject.name}
+                                    </span>
+                                )}
+                                {item.gradeSemester && (
+                                    <span className="text-sm print:text-xs text-muted-foreground">
+                                        {item.gradeSemester}
+                                    </span>
+                                )}
+                                {item.paperLevel && (
+                                    <span className="text-sm print:text-xs text-muted-foreground">
+                                        {t.printPreview?.paperLevel || 'Paper Level'}: {item.paperLevel.toUpperCase()}
+                                    </span>
+                                )}
+                                {showTags && tags.length > 0 && (
+                                    <>
+                                        <span className="text-base print:text-sm font-semibold">
+                                            {t.printPreview?.knowledgePoints || 'Knowledge Points'}:
                                         </span>
-                                    )}
-                                    {item.gradeSemester && (
-                                        <span className="text-sm text-muted-foreground">
-                                            {item.gradeSemester}
+                                        {tags.map((tag, tagIndex) => (
+                                            <span
+                                                key={`${tag}-${tagIndex}`}
+                                                className="px-3 py-1 bg-muted rounded text-sm print:text-xs"
+                                            >
+                                                {tag}
+                                            </span>
+                                        ))}
+                                    </>
+                                )}
+                                {showAbilityTags && abilityTags.length > 0 && (
+                                    <>
+                                        <span className="text-base print:text-sm font-semibold">
+                                            {t.printPreview?.abilityTags || 'Ability Tags'}:
                                         </span>
-                                    )}
-                                    {item.paperLevel && (
-                                        <span className="text-sm text-muted-foreground">
-                                            {t.printPreview?.paperLevel || 'Paper Level'}: {item.paperLevel.toUpperCase()}
-                                        </span>
-                                    )}
-                                </div>
+                                        {abilityTags.map((tag, tagIndex) => (
+                                            <span
+                                                key={`${tag}-${tagIndex}`}
+                                                className="px-3 py-1 bg-muted rounded text-sm print:text-xs"
+                                            >
+                                                {tag}
+                                            </span>
+                                        ))}
+                                    </>
+                                )}
                             </div>
 
                             {/* Original Image or Text */}
@@ -186,23 +289,6 @@ function PrintPreviewContent() {
 
 
 
-                            {/* Knowledge Points */}
-                            {showTags && tags.length > 0 && (
-                                <div className="mb-4">
-                                    <h3 className="font-semibold mb-2">{t.printPreview?.knowledgePoints || 'Knowledge Points'}:</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {tags.map((tag) => (
-                                            <span
-                                                key={tag}
-                                                className="px-2 py-1 bg-muted rounded text-sm"
-                                            >
-                                                {tag}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
                             {/* Answer */}
                             {showAnswers && item.answerText && (
                                 <div className="mb-4">
@@ -222,7 +308,7 @@ function PrintPreviewContent() {
                     );
                 })}
 
-                {items.length === 0 && (
+                {selectedItems.length === 0 && (
                     <div className="text-center py-12 text-muted-foreground">
                         {t.printPreview?.noItems || 'No matching error items'}
                     </div>

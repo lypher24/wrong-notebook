@@ -1,13 +1,18 @@
 import { AzureOpenAI } from "openai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisBatchResult } from "./types";
 import { jsonrepair } from "jsonrepair";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt } from './prompts';
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateAbilityAnalysisPrompt, parseAbilityAnalysisResponse } from './prompts';
 import { getAppConfig } from '../config';
 import { validateParsedQuestion, safeParseParsedQuestion } from './schema';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 
 const logger = createLogger('ai:azure');
+
+type AzureUserContent = string | Array<
+    { type: "text"; text: string } |
+    { type: "image_url"; image_url: { url: string } }
+>;
 
 // Azure 配置接口
 export interface AzureConfig {
@@ -83,6 +88,9 @@ export class AzureOpenAIProvider implements AIService {
         const subjectRaw = this.extractTag(text, "subject");
         const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
         const requiresImageRaw = this.extractTag(text, "requires_image");
+        const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
+        const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
+        const mistakeStatusRaw = this.extractTag(text, "mistake_status");
 
         // Basic Validation
         if (!questionText || !answerText || !analysis) {
@@ -92,9 +100,9 @@ export class AzureOpenAIProvider implements AIService {
 
         // Process Subject
         let subject: ParsedQuestion['subject'] = '其他';
-        const validSubjects = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"];
-        if (subjectRaw && validSubjects.includes(subjectRaw)) {
-            subject = subjectRaw as any;
+        const validSubjects: ParsedQuestion['subject'][] = ["数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"];
+        if (subjectRaw && (validSubjects as string[]).includes(subjectRaw)) {
+            subject = subjectRaw as ParsedQuestion['subject'];
         }
 
         // Process Knowledge Points
@@ -106,11 +114,19 @@ export class AzureOpenAIProvider implements AIService {
         // Process requiresImage
         const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
 
+        const validMistakeStatuses = ["not_attempted", "wrong_attempt", "unknown"];
+        const mistakeStatus = mistakeStatusRaw && validMistakeStatuses.includes(mistakeStatusRaw.trim())
+            ? mistakeStatusRaw.trim() as ParsedQuestion['mistakeStatus']
+            : (wrongAnswerText || mistakeAnalysis ? 'wrong_attempt' : undefined);
+
         // Construct Result
         const result: ParsedQuestion = {
             questionText,
             answerText,
             analysis,
+            wrongAnswerText,
+            mistakeAnalysis,
+            mistakeStatus,
             subject,
             knowledgePoints,
             requiresImage
@@ -326,7 +342,7 @@ Question: ${questionText}`;
 
         try {
             // 根据是否有图片构建不同的消息内容
-            let userContent: any = "请根据上述题目提供答案和解析。";
+            let userContent: AzureUserContent = "请根据上述题目提供答案和解析。";
             if (imageBase64) {
                 // 如果有图片，构建多模态消息
                 const imageUrl = imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
@@ -374,6 +390,45 @@ Question: ${questionText}`;
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisBatchResult> {
+        const prompt = generateAbilityAnalysisPrompt(items, availableTags, overallSummary);
+
+        logger.info({
+            provider: 'Azure OpenAI',
+            itemCount: items.length,
+            availableTagCount: availableTags.length,
+            language,
+        }, 'Ability tag analysis request');
+
+        try {
+            const response = await this.client.chat.completions.create({
+                model: this.deployment,
+                messages: [
+                    { role: "system", content: prompt },
+                    { role: "user", content: "请按要求输出 <ability_results>。" }
+                ],
+                max_tokens: 8192,
+            });
+
+            if (!response || !response.choices || response.choices.length === 0) {
+                throw new Error("AI_RESPONSE_ERROR: API returned empty or invalid response");
+            }
+
+            const text = response.choices[0]?.message?.content || "";
+            if (!text) throw new Error("Empty response from AI");
+
+            try {
+                return parseAbilityAnalysisResponse(text);
+            } catch {
+                return parseAbilityAnalysisResponse(jsonrepair(text));
+            }
+        } catch (error) {
+            logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during ability tag analysis');
             this.handleError(error);
             throw error;
         }

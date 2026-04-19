@@ -250,6 +250,37 @@ describe('Azure OpenAI Provider 响应解析', () => {
             expect(result.requiresImage).toBe(false);
         });
 
+        it('应该解析错因分析相关可选标签', () => {
+            const mockResponse = `
+<question_text>计算 12 + 8</question_text>
+<answer_text>20</answer_text>
+<analysis>直接相加。</analysis>
+<wrong_answer_text>12 + 8 = 22</wrong_answer_text>
+<mistake_status>wrong_attempt</mistake_status>
+<mistake_analysis>个位相加时计算错误，缺少检验。</mistake_analysis>
+            `.trim();
+
+            const result = (provider as any).parseResponse(mockResponse);
+
+            expect(result.wrongAnswerText).toBe('12 + 8 = 22');
+            expect(result.mistakeStatus).toBe('wrong_attempt');
+            expect(result.mistakeAnalysis).toContain('计算错误');
+        });
+
+        it('缺少错因分析标签时应该保持兼容', () => {
+            const mockResponse = `
+<question_text>测试题目</question_text>
+<answer_text>测试答案</answer_text>
+<analysis>测试解析</analysis>
+            `.trim();
+
+            const result = (provider as any).parseResponse(mockResponse);
+
+            expect(result.wrongAnswerText).toBe('');
+            expect(result.mistakeAnalysis).toBe('');
+            expect(result.mistakeStatus).toBeUndefined();
+        });
+
         it('应该正确处理无效学科返回默认值"其他"', () => {
             const mockResponse = `
 <question_text>测试题目</question_text>

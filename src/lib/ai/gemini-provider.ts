@@ -1,12 +1,17 @@
 import { GoogleGenAI } from "@google/genai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig } from "./types";
-import { generateAnalyzePrompt, generateSimilarQuestionPrompt } from './prompts';
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, AbilityAnalysisItemInput, AbilityTagCandidate, AbilityAnalysisBatchResult } from "./types";
+import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateAbilityAnalysisPrompt, parseAbilityAnalysisResponse } from './prompts';
 import { safeParseParsedQuestion } from './schema';
 import { getAppConfig } from '../config';
 import { getMathTagsFromDB, getTagsFromDB } from './tag-service';
 import { createLogger } from '../logger';
 
 const logger = createLogger('ai:gemini');
+
+type GeminiContent = string | Array<
+    { text: string } |
+    { inlineData: { mimeType: string; data: string } }
+>;
 
 export class GeminiProvider implements AIService {
     private ai: GoogleGenAI;
@@ -101,6 +106,9 @@ export class GeminiProvider implements AIService {
         const subjectRaw = this.extractTag(text, "subject");
         const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
         const requiresImageRaw = this.extractTag(text, "requires_image");
+        const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
+        const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
+        const mistakeStatusRaw = this.extractTag(text, "mistake_status");
 
         // Basic Validation
         if (!questionText || !answerText || !analysis) {
@@ -124,11 +132,19 @@ export class GeminiProvider implements AIService {
         // Process requiresImage
         const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
 
+        const validMistakeStatuses = ["not_attempted", "wrong_attempt", "unknown"];
+        const mistakeStatus = mistakeStatusRaw && validMistakeStatuses.includes(mistakeStatusRaw.trim())
+            ? mistakeStatusRaw.trim() as ParsedQuestion['mistakeStatus']
+            : (wrongAnswerText || mistakeAnalysis ? 'wrong_attempt' : undefined);
+
         // Construct Result
         const result: ParsedQuestion = {
             questionText,
             answerText,
             analysis,
+            wrongAnswerText,
+            mistakeAnalysis,
+            mistakeStatus,
             subject,
             knowledgePoints,
             requiresImage
@@ -292,7 +308,7 @@ export class GeminiProvider implements AIService {
 
         try {
             // 根据是否有图片构建不同的请求内容
-            let contents: any;
+            let contents: GeminiContent;
             if (imageBase64) {
                 // 移除 data:image/xxx;base64, 前缀（如果存在）
                 const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
@@ -327,6 +343,33 @@ export class GeminiProvider implements AIService {
 
         } catch (error) {
             logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during reanswer');
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    async analyzeAbilityTags(items: AbilityAnalysisItemInput[], availableTags: AbilityTagCandidate[], overallSummary: string = '', language: 'zh' | 'en' = 'zh'): Promise<AbilityAnalysisBatchResult> {
+        const prompt = generateAbilityAnalysisPrompt(items, availableTags, overallSummary);
+
+        logger.info({
+            provider: 'Gemini',
+            itemCount: items.length,
+            availableTagCount: availableTags.length,
+            language,
+        }, 'Ability tag analysis request');
+
+        try {
+            const response = await this.retryOperation(() => this.ai.models.generateContent({
+                model: this.modelName,
+                contents: prompt
+            }));
+
+            const text = response.text || '';
+            if (!text) throw new Error("Empty response from AI");
+
+            return parseAbilityAnalysisResponse(text);
+        } catch (error) {
+            logger.error({ error, stack: error instanceof Error ? error.stack : undefined }, 'Error during ability tag analysis');
             this.handleError(error);
             throw error;
         }
