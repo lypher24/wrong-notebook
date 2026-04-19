@@ -26,10 +26,17 @@ import { apiClient } from "@/lib/api-client";
 import { cleanMarkdown } from "@/lib/markdown-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants/pagination";
+import { getMistakeStatusLabel } from "@/lib/mistake-status";
 
 interface ErrorListProps {
     subjectId?: string;
     subjectName?: string;
+}
+
+interface KnowledgeFilterChange {
+    gradeSemester?: string;
+    chapter?: string;
+    tag?: string;
 }
 
 export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
@@ -52,7 +59,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isDeleting, setIsDeleting] = useState(false);
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const router = useRouter();
 
     const handleExportPrint = () => {
@@ -79,7 +86,7 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
         setSelectedTag(selectedTag === tag ? null : tag);
     };
 
-    const handleFilterChange = ({ gradeSemester, chapter, tag }: any) => {
+    const handleFilterChange = ({ gradeSemester, chapter, tag }: KnowledgeFilterChange) => {
         if (gradeSemester !== undefined) setGradeFilter(gradeSemester);
         if (chapter !== undefined) setChapterFilter(chapter);
         // 注意：tag 可能是 undefined（表示清除），需要用 'tag' in obj 来判断是否传入了该参数
@@ -339,15 +346,16 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
                 {filteredItems.map((item) => {
                     // 优先使用 tags 关联，回退到 knowledgePoints
                     let tags: string[] = [];
-                    if ((item as any).tags && (item as any).tags.length > 0) {
-                        tags = (item as any).tags.map((t: any) => t.name);
+                    if (item.tags && item.tags.length > 0) {
+                        tags = item.tags.map(tag => tag.name);
                     } else {
                         try {
                             tags = JSON.parse(item.knowledgePoints || "[]");
-                        } catch (e) {
+                        } catch {
                             tags = [];
                         }
                     }
+                    const abilityTags = (item.abilityTagLinks || []).map(link => link.abilityTag.name);
                     return (
                         <div key={item.id} className="relative">
                             {/* 选择模式下的复选框 */}
@@ -396,6 +404,16 @@ export function ErrorList({ subjectId, subjectName }: ErrorListProps = {}) {
                                                     ? cleanText.substring(0, 80) + "..."
                                                     : cleanText;
                                             })()}
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 mt-3">
+                                            <Badge variant={item.mistakeStatus === "wrong_attempt" ? "default" : "secondary"} className="text-xs">
+                                                {getMistakeStatusLabel(item.mistakeStatus, language)}
+                                            </Badge>
+                                            {abilityTags.slice(0, 3).map((tag) => (
+                                                <Badge key={tag} variant="outline" className="text-xs border-dashed">
+                                                    {tag}
+                                                </Badge>
+                                            ))}
                                         </div>
                                         <div className="flex flex-wrap gap-2 mt-3">
                                             {(expandedTags.has(item.id) ? tags : tags.slice(0, 3)).map((tag: string) => (

@@ -57,7 +57,10 @@ export async function GET(req: Request) {
                 OR: [
                     { questionText: { contains: query } },
                     { analysis: { contains: query } },
+                    { wrongAnswerText: { contains: query } },
+                    { mistakeAnalysis: { contains: query } },
                     { knowledgePoints: { contains: query } },
+                    { abilityTagLinks: { some: { abilityTag: { name: { contains: query } } } } },
                 ]
             });
         }
@@ -152,6 +155,10 @@ export async function GET(req: Request) {
             include: {
                 subject: true,
                 tags: true,
+                abilityTagLinks: {
+                    include: { abilityTag: true },
+                    orderBy: { createdAt: 'asc' },
+                },
             },
             skip: (page - 1) * pageSize,
             take: pageSize,

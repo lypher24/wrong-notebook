@@ -2,6 +2,7 @@
  * Shared AI prompt templates
  * This module provides centralized prompt management
  */
+import { jsonrepair } from "jsonrepair";
 
 /**
  * Options for customizing prompts
@@ -43,6 +44,18 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 判断这道题是否需要依赖图片才能正确解答。如果题目包含几何图形、函数图像、实验装置图、电路图等必须看图才能理解的内容，填写 true；如果只需要文字描述即可理解（如英语题、纯文字数学题），填写 false。
 </requires_image>
 
+<wrong_answer_text>
+如果图片中包含学生已经写出的错误解答、错误步骤、草稿或错误答案，请尽量按原样摘录；如果没有看到学生错误解答，请留空。
+</wrong_answer_text>
+
+<mistake_status>
+填写以下值之一：wrong_attempt（图片中有错误解答或错误步骤）、not_attempted（没有错误解答，像是完全不会做或未作答）、unknown（无法判断）。
+</mistake_status>
+
+<mistake_analysis>
+如果图片中包含错误解答，请分析错误可能发生在哪一步、为什么错、导致了什么后果，以及背后的能力/习惯原因；如果没有错误解答，请留空。
+</mistake_analysis>
+
 <question_text>
 在此处填写题目的完整文本。使用 Markdown 格式。所有数学公式使用 LaTeX 符号（行内 $...$，块级 $$...$$）。
 </question_text>
@@ -65,7 +78,7 @@ export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE
 - 每题最多 5 个标签。
 
 【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 6 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
+1. **格式严格**：必须严格包含上述 9 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
 2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
 3. **内容完整**：如果包含子问题，请在 question_text 中完整列出。
 4. **禁止图片**：严禁包含任何图片链接或 markdown 图片语法。
@@ -376,4 +389,129 @@ export function generateReanswerPrompt(
     subject_hint: subjectHint,
     provider_hints: options?.providerHints || ''
   }).trim();
+}
+
+export const DEFAULT_ABILITY_ANALYSIS_TEMPLATE = `【角色与核心任务】
+你是一位严谨的学习诊断老师。请根据一批已保存错题的题目、答案、解析、知识点、作答状态和错因分析，从给定的“抽象能力标签库”中为每道题选择 1~3 个最能解释薄弱点的标签。
+
+【整体统计摘要】
+{{overall_summary}}
+
+【可选抽象能力标签】
+{{ability_tags}}
+
+【错题列表】
+{{items}}
+
+【输出要求】
+只输出一个 <ability_results> 标签，标签内容必须是 JSON 数组，不要使用 Markdown 代码块。格式如下：
+<ability_results>
+[
+  {"id":"错题ID","tags":["标签1","标签2"],"reason":"一句话说明"}
+]
+</ability_results>
+
+【规则】
+- 每道题最多 3 个标签，优先 1 个主标签 + 1 个副标签。
+- 必须从可选抽象能力标签中选择，不能自造标签。
+- 如果某题所在学科没有可选标签，返回空 tags。
+- 不要把普通知识点当成抽象能力标签。
+- 如果表面是计算错，但根因更像审题、变形、检验或建模，要优先标根因。`;
+
+export interface AbilityAnalysisPromptItem {
+  id: string;
+  subject?: string | null;
+  questionText?: string | null;
+  answerText?: string | null;
+  analysis?: string | null;
+  knowledgePoints?: string[];
+  wrongAnswerText?: string | null;
+  mistakeAnalysis?: string | null;
+  mistakeStatus?: string | null;
+}
+
+export interface AbilityAnalysisPromptTag {
+  name: string;
+  subject: string;
+  description?: string | null;
+}
+
+export interface ParsedAbilityAnalysisResult {
+  errorItemId: string;
+  tags: string[];
+  reason?: string;
+}
+
+function truncateForPrompt(text: string | null | undefined, maxLength = 1200): string {
+  const value = (text || '').trim();
+  if (value.length <= maxLength) return value;
+  return value.slice(0, maxLength) + '……';
+}
+
+export function generateAbilityAnalysisPrompt(
+  items: AbilityAnalysisPromptItem[],
+  availableTags: AbilityAnalysisPromptTag[],
+  overallSummary = '暂无整体统计。',
+  options?: { customTemplate?: string }
+): string {
+  const tagsText = availableTags.length > 0
+    ? availableTags
+      .map(tag => `- [${tag.subject}] ${tag.name}${tag.description ? `：${tag.description}` : ''}`)
+      .join('\n')
+    : '（无可用能力标签）';
+
+  const itemsText = items.map((item, index) => {
+    return [
+      `### ${index + 1}. ID: ${item.id}`,
+      `学科: ${item.subject || 'unknown'}`,
+      `知识点: ${(item.knowledgePoints || []).join('、') || '无'}`,
+      `作答状态: ${item.mistakeStatus || 'unknown'}`,
+      `题目: ${truncateForPrompt(item.questionText) || '无'}`,
+      `参考答案: ${truncateForPrompt(item.answerText, 800) || '无'}`,
+      `解析: ${truncateForPrompt(item.analysis, 1200) || '无'}`,
+      `错误解答: ${truncateForPrompt(item.wrongAnswerText, 800) || '无'}`,
+      `错因分析: ${truncateForPrompt(item.mistakeAnalysis, 800) || '无'}`,
+    ].join('\n');
+  }).join('\n\n');
+
+  const template = options?.customTemplate || DEFAULT_ABILITY_ANALYSIS_TEMPLATE;
+
+  return replaceVariables(template, {
+    overall_summary: overallSummary,
+    ability_tags: tagsText,
+    items: itemsText,
+  }).trim();
+}
+
+function stripCodeFence(text: string): string {
+  return text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+export function parseAbilityAnalysisResponse(text: string): ParsedAbilityAnalysisResult[] {
+  const match = text.match(/<ability_results>([\s\S]*?)<\/ability_results>/i);
+  const rawJson = stripCodeFence(match ? match[1] : text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    parsed = JSON.parse(jsonrepair(rawJson));
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed.map((rawItem: unknown) => {
+    const item = rawItem && typeof rawItem === 'object'
+      ? rawItem as Record<string, unknown>
+      : {};
+
+    return {
+      errorItemId: String(item.id || item.errorItemId || ''),
+      tags: Array.isArray(item.tags)
+        ? item.tags.map((tag: unknown) => String(tag || '').trim()).filter(Boolean).slice(0, 3)
+        : [],
+      reason: typeof item.reason === 'string' ? item.reason : undefined,
+    };
+  }).filter(item => item.errorItemId);
 }

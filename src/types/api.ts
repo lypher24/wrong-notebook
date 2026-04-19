@@ -22,6 +22,25 @@ export interface Tag {
     };
 }
 
+export interface AbilityTag {
+    id: string;
+    name: string;
+    subject: string;
+    description?: string | null;
+    order?: number;
+    code?: string | null;
+    isSystem?: boolean;
+    userId?: string | null;
+}
+
+export interface ErrorItemAbilityTag {
+    id: string;
+    errorItemId: string;
+    abilityTagId: string;
+    source: 'ai' | 'manual' | string;
+    abilityTag: AbilityTag;
+}
+
 // AI Model types
 export interface AIModel {
     id: string;
@@ -55,12 +74,16 @@ export interface ErrorItem {
     questionText?: string | null;
     answerText?: string | null;
     analysis?: string | null;
+    wrongAnswerText?: string | null;
+    mistakeAnalysis?: string | null;
+    mistakeStatus?: 'not_attempted' | 'wrong_attempt' | 'unknown' | string | null;
     knowledgePoints?: string | null;
 
     source?: string | null;
     errorType?: string | null;
     userNotes?: string | null;
     tags?: Tag[];
+    abilityTagLinks?: ErrorItemAbilityTag[];
 
     masteryLevel: number;
     gradeSemester?: string | null;
@@ -79,6 +102,14 @@ export interface CreateErrorItemRequest extends ParsedQuestion {
 }
 
 export type AnalyzeResponse = ParsedQuestion;
+
+export interface AbilityTagsResponse {
+    tags: AbilityTag[];
+}
+
+export interface AbilityTagSuggestionsResponse {
+    suggestions: string[];
+}
 
 export interface UserProfile {
     id: string;
