@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
+import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
 
 const logger = createLogger('api:error-items:id');
 
@@ -82,7 +84,7 @@ export async function PUT(
         }
 
         const body = await req.json();
-        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis } = body;
+        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, wrongAnswerText, mistakeAnalysis, mistakeStatus } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
@@ -98,12 +100,23 @@ export async function PUT(
         }
 
         // 构建更新数据
-        const updateData: any = {};
+        const updateData: Prisma.ErrorItemUpdateInput = {};
         if (gradeSemester !== undefined) updateData.gradeSemester = gradeSemester;
         if (paperLevel !== undefined) updateData.paperLevel = paperLevel;
         if (questionText !== undefined) updateData.questionText = questionText;
         if (answerText !== undefined) updateData.answerText = answerText;
         if (analysis !== undefined) updateData.analysis = analysis;
+        if (wrongAnswerText !== undefined) updateData.wrongAnswerText = wrongAnswerText || null;
+        if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
+        if (mistakeStatus !== undefined || wrongAnswerText !== undefined || mistakeAnalysis !== undefined) {
+            const nextWrongAnswerText = wrongAnswerText !== undefined ? wrongAnswerText : errorItem.wrongAnswerText;
+            const nextMistakeAnalysis = mistakeAnalysis !== undefined ? mistakeAnalysis : errorItem.mistakeAnalysis;
+            updateData.mistakeStatus = normalizeMistakeStatusForSave(
+                mistakeStatus,
+                nextWrongAnswerText,
+                nextMistakeAnalysis
+            );
+        }
 
         // 处理 knowledgePoints (标签)
         if (knowledgePoints !== undefined) {
