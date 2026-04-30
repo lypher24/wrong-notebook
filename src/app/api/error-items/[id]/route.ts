@@ -79,12 +79,12 @@ export async function PUT(
             user = await prisma.user.findFirst();
         }
 
-        if (!user) {
+        if (!user) {,
             return unauthorized();
         }
 
         const body = await req.json();
-        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, wrongAnswerText, mistakeAnalysis, mistakeStatus } = body;
+        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, subjectId,  wrongAnswerText, mistakeAnalysis, mistakeStatus } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
@@ -108,6 +108,13 @@ export async function PUT(
         if (analysis !== undefined) updateData.analysis = analysis;
         if (wrongAnswerText !== undefined) updateData.wrongAnswerText = wrongAnswerText || null;
         if (mistakeAnalysis !== undefined) updateData.mistakeAnalysis = mistakeAnalysis || null;
+        if (subjectId !== undefined) {
+            // 验证目标错题本存在且属于该用户
+            const targetSubject = await prisma.subject.findUnique({ where: { id: subjectId } });
+            if (!targetSubject || targetSubject.userId !== user.id) {
+                return forbidden("Not authorized to move to this notebook");
+            }
+            updateData.subjectId = subjectId === "" ? null : subjectId;
         if (mistakeStatus !== undefined || wrongAnswerText !== undefined || mistakeAnalysis !== undefined) {
             const nextWrongAnswerText = wrongAnswerText !== undefined ? wrongAnswerText : errorItem.wrongAnswerText;
             const nextMistakeAnalysis = mistakeAnalysis !== undefined ? mistakeAnalysis : errorItem.mistakeAnalysis;
